@@ -1,0 +1,1317 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Chromatogram Viewer</title>
+<style>
+  :root {
+    color-scheme: light;
+    --surface-1:      #fcfcfb;
+    --page:           #f9f9f7;
+    --text-primary:   #0b0b0b;
+    --text-secondary: #52514e;
+    --text-muted:     #898781;
+    --gridline:       #e1e0d9;
+    --baseline:       #c3c2b7;
+    --border:         rgba(11,11,11,0.10);
+    --hover-wash:     rgba(11,11,11,0.05);
+  }
+  @media (prefers-color-scheme: dark) {
+    :root:where(:not([data-theme="light"])) {
+      color-scheme: dark;
+      --surface-1:      #1a1a19;
+      --page:           #0d0d0d;
+      --text-primary:   #ffffff;
+      --text-secondary: #c3c2b7;
+      --text-muted:     #898781;
+      --gridline:       #2c2c2a;
+      --baseline:       #383835;
+      --border:         rgba(255,255,255,0.10);
+      --hover-wash:     rgba(255,255,255,0.07);
+    }
+  }
+  :root[data-theme="dark"] {
+    color-scheme: dark;
+    --surface-1:      #1a1a19;
+    --page:           #0d0d0d;
+    --text-primary:   #ffffff;
+    --text-secondary: #c3c2b7;
+    --text-muted:     #898781;
+    --gridline:       #2c2c2a;
+    --baseline:       #383835;
+    --border:         rgba(255,255,255,0.10);
+    --hover-wash:     rgba(255,255,255,0.07);
+  }
+
+  * { box-sizing: border-box; }
+  html, body {
+    margin: 0; height: 100%;
+    background: var(--page);
+    color: var(--text-primary);
+    font: 13px/1.4 system-ui, -apple-system, "Segoe UI", sans-serif;
+  }
+  body { display: flex; flex-direction: column; height: 100vh; overflow: hidden; }
+
+  header {
+    display: flex; align-items: center; gap: 12px;
+    padding: 10px 16px;
+    border-bottom: 1px solid var(--border);
+    background: var(--surface-1);
+    flex: 0 0 auto;
+  }
+  header h1 { font-size: 14px; font-weight: 600; margin: 0; flex: 1; }
+  header .filename { color: var(--text-secondary); font-size: 12px; }
+
+  button {
+    font: inherit; cursor: pointer;
+    background: var(--surface-1); color: var(--text-primary);
+    border: 1px solid var(--border); border-radius: 6px;
+    padding: 5px 10px;
+  }
+  button:hover { background: var(--hover-wash); }
+  button.primary { border-color: #2a78d6; color: #2a78d6; }
+  button:disabled { opacity: 0.4; cursor: default; }
+
+  .layout { flex: 1 1 auto; display: flex; min-height: 0; }
+
+  aside {
+    width: 300px; flex: 0 0 300px;
+    border-right: 1px solid var(--border);
+    background: var(--surface-1);
+    display: flex; flex-direction: column;
+    min-height: 0;
+    overflow-y: auto;
+  }
+  .drop-zone {
+    margin: 12px; padding: 18px 10px;
+    border: 1.5px dashed var(--baseline);
+    border-radius: 8px;
+    text-align: center;
+    color: var(--text-secondary);
+    font-size: 12px;
+    cursor: pointer;
+  }
+  .drop-zone.drag-over { border-color: #2a78d6; color: #2a78d6; background: var(--hover-wash); }
+  .drop-zone input { display: none; }
+
+  .controls {
+    padding: 0 12px 12px; border-bottom: 1px solid var(--border);
+    display: flex; flex-direction: column; gap: 8px;
+  }
+  .controls .row { display: flex; align-items: center; gap: 8px; }
+  .controls label { display: flex; align-items: center; gap: 6px; color: var(--text-secondary); font-size: 12px; user-select: none; }
+  .controls input[type="range"] { flex: 1; }
+  .controls input[type="number"] {
+    width: 74px; font: inherit; background: var(--page); color: var(--text-primary);
+    border: 1px solid var(--border); border-radius: 4px; padding: 3px 5px;
+  }
+  .controls select {
+    font: inherit; font-size: 12px; background: var(--page); color: var(--text-primary);
+    border: 1px solid var(--border); border-radius: 4px; padding: 3px 5px; flex: 0 0 auto;
+  }
+  .controls input[type="text"] {
+    flex: 1; min-width: 0; font: inherit; background: var(--page); color: var(--text-primary);
+    border: 1px solid var(--border); border-radius: 4px; padding: 3px 5px;
+  }
+  .controls .btnrow { display: flex; gap: 6px; flex-wrap: wrap; }
+  .controls .btnrow button { flex: 1; font-size: 12px; padding: 5px 6px; }
+
+  .sample-list-header {
+    display: flex; justify-content: space-between; align-items: center;
+    padding: 8px 12px 4px; color: var(--text-muted); font-size: 11px;
+    text-transform: uppercase; letter-spacing: 0.04em;
+  }
+  .sample-list-header a { color: var(--text-muted); cursor: pointer; text-decoration: underline; font-size: 11px; text-transform: none; letter-spacing: normal; }
+  #sampleList { list-style: none; margin: 0; padding: 0 6px 12px; flex: 0 0 auto; }
+  #sampleList li {
+    display: flex; align-items: center; gap: 6px;
+    padding: 5px 6px; border-radius: 6px;
+    cursor: grab;
+  }
+  #sampleList li:hover { background: var(--hover-wash); }
+  #sampleList li.dragging { opacity: 0.4; }
+  #sampleList li.drag-over-top { box-shadow: inset 0 2px 0 #2a78d6; }
+  #sampleList li.drag-over-bottom { box-shadow: inset 0 -2px 0 #2a78d6; }
+  .handle { color: var(--text-muted); font-size: 12px; flex: 0 0 auto; }
+  .swatch { width: 10px; height: 10px; border-radius: 2px; flex: 0 0 auto; }
+  .sname { flex: 1 1 auto; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 12px; }
+  .sname.hidden-sample { color: var(--text-muted); text-decoration: line-through; }
+
+  main { flex: 1 1 auto; position: relative; min-width: 0; display: flex; flex-direction: column; }
+  #chartStage {
+    flex: 1 1 auto; min-height: 0; overflow: auto;
+    display: flex; align-items: center; justify-content: center;
+    background: var(--page);
+  }
+  #chartWrap { flex: 1 1 auto; position: relative; width: 100%; height: 100%; }
+  #chartWrap.fixed-size {
+    flex: 0 0 auto; margin: 16px;
+    background: var(--surface-1);
+    box-shadow: 0 0 0 1px var(--border), 0 8px 24px rgba(0,0,0,0.18);
+  }
+  svg#chart { width: 100%; height: 100%; display: block; cursor: grab; }
+  svg#chart.panning { cursor: grabbing; }
+
+  .empty-state {
+    position: absolute; inset: 0; display: flex; align-items: center; justify-content: center;
+    color: var(--text-muted); font-size: 13px; text-align: center; pointer-events: none;
+  }
+
+  #tooltip {
+    position: absolute; pointer-events: none;
+    background: var(--surface-1); border: 1px solid var(--border); border-radius: 6px;
+    padding: 6px 8px; font-size: 12px; box-shadow: 0 2px 8px rgba(0,0,0,0.15);
+    display: none; z-index: 5; max-width: 260px;
+  }
+  #tooltip .t-x { color: var(--text-muted); font-size: 11px; margin-bottom: 4px; }
+  #tooltip .t-row { display: flex; align-items: center; gap: 6px; margin: 2px 0; }
+  #tooltip .t-key { width: 14px; height: 2px; flex: 0 0 auto; }
+  #tooltip .t-val { font-weight: 600; }
+  #tooltip .t-name { color: var(--text-secondary); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+
+  #tablePanel {
+    flex: 0 0 auto; max-height: 40%; overflow: auto;
+    border-top: 1px solid var(--border);
+    background: var(--surface-1);
+    display: none;
+  }
+  #tablePanel.open { display: block; }
+  #tablePanel table { border-collapse: collapse; width: 100%; font-size: 11px; }
+  #tablePanel th, #tablePanel td {
+    text-align: right; padding: 3px 8px; border-bottom: 1px solid var(--gridline);
+    font-variant-numeric: tabular-nums; white-space: nowrap;
+  }
+  #tablePanel th { position: sticky; top: 0; background: var(--surface-1); color: var(--text-secondary); }
+  #tablePanel .note { padding: 8px; color: var(--text-muted); }
+</style>
+</head>
+<body>
+
+<header>
+  <h1>Chromatogram Viewer</h1>
+  <span class="filename" id="filenameLabel"></span>
+  <button id="themeToggle" title="Toggle light/dark">&#9680;</button>
+</header>
+
+<div class="layout">
+  <aside>
+    <div class="drop-zone" id="dropZone">
+      Drop a TSV here or click to browse<br>
+      <span style="font-size:11px;">wide format: first column = time, one column per sample</span>
+      <input type="file" id="fileInput" accept=".tsv,.txt">
+    </div>
+
+    <div class="controls">
+      <h4>Data Display</h4>
+      <div class="row">
+        <label style="flex:0 0 auto;">X range</label>
+        <input type="number" id="xMinInput" step="any" placeholder="min">
+        <input type="number" id="xMaxInput" step="any" placeholder="max">
+      </div>
+      <div class="row">
+        <label><input type="checkbox" id="normalizeToggle" checked> Normalize each trace</label>
+      </div>
+      <div class="row">
+        <label style="flex:0 0 auto;">Offset</label>
+        <input type="range" id="offsetSlider" min="0" max="300" step="1" value="120">
+        <input type="number" id="offsetNumber" value="120">
+      </div>
+      <div class="btnrow">
+        <button id="autoOffsetBtn">Auto offset</button>
+        <button id="resetZoomBtn">Reset zoom</button>
+      </div>
+        <div class="btnrow">
+        <button id="tableToggleBtn">Show data table (not exported)</button>
+      </div>
+
+      <h4>Graph elements</h4>
+      <div class="row">
+        <label style="flex:0 0 auto;">Gridline opacity</label>
+      </div>
+      <div class="row">
+        <input type="range" id="gridlineOpacitySlider" min="0" max="100" step="1" value="50">
+        <input type="number" id="gridlineOpacityNumber" min="0" max="100" value="50">
+      </div>
+      <div class="row">
+        <label style="flex:0 0 auto;">Axis title scale</label>
+      </div>
+      <div class="row">
+        <input type="range" id="axisTitleFontSlider" min="50" max="250" step="5" value="150">
+        <input type="number" id="axisTitleFontNumber" min="50" max="250" value="150">
+      </div>
+      <div class="row">
+        <label style="flex:0 0 auto;">Division font scale</label>
+      </div>
+      <div class="row">
+        <input type="range" id="tickFontSlider" min="50" max="250" step="5" value="150">
+        <input type="number" id="tickFontNumber" min="50" max="250" value="150">
+      </div>
+      <div class="row">
+        <label><input type="checkbox" id="labelsToggle">Trace labels</label>
+        <select id="labelAlignSelect" style="margin-left:auto;">d
+          <option value="right" selected>Right</option>
+          <option value="left">Left</option>
+        </select>
+      </div>
+      <div class="row" id="labelFontRow" style="display:none;">
+        <label style="flex:0 0 auto;">Font size</label>
+        <input type="range" id="labelFontSlider" min="50" max="250" step="5" value="100">
+        <input type="number" id="labelFontNumber" min="50" max="250" value="100">
+      </div>
+      <div class="row" id="labelOffsetRow" style="display:none;">
+        <label style="flex:0 0 auto;">V-offset</label>
+        <input type="range" id="labelOffsetSlider" min="-100" max="150" step="1" value="10">
+        <input type="number" id="labelOffsetNumber" min="-100" max="150" value="10">
+      </div>
+
+      <h4>Export</h4>
+      <div class="row">
+        <label><input type="checkbox" id="grayscaleToggle"> Grayscale mode</label>
+      </div>
+      <div class="row">
+        <label><input type="checkbox" id="fixedSizeToggle"> Fixed canvas size</label>
+      </div>
+      <div class="row" id="sizeInputsRow" style="display:none;">
+        <input type="number" id="canvasWidthInput" min="50" step="1" placeholder="width">
+        <span style="color:var(--text-muted);">&times;</span>
+        <input type="number" id="canvasHeightInput" min="50" step="1" placeholder="height">
+        <span style="color:var(--text-muted); flex:0 0 auto;">px</span>
+      </div>
+            <div class="btnrow">
+        <button id="exportSettingsBtn">Export settings</button>
+        <button id="importSettingsBtn">Import settings</button>
+        <input type="file" id="settingsFileInput" accept=".json" style="display:none;">
+      </div>
+      <div class="row">
+        <label style="flex:0 0 auto;">SVG filename</label>
+        <input type="text" id="svgFilenameInput" placeholder="(Leave empty to use TSV name)">
+      </div>
+      <div class="btnrow">
+        <button id="exportSvgBtn">Export SVG</button>
+       <!-- <button id="exportPngBtn" class="primary">Export PNG</button> -->
+      </div>
+    </div>
+
+    <div class="sample-list-header">
+      <span id="sampleCount">Samples</span>
+      <a id="toggleAllLink">toggle all</a>
+    </div>
+    <ul id="sampleList"></ul>
+
+    <h4>Vanity</h4>
+	    <div class = "row">
+		    <label>Coded using Caludo Sonnet 5</label>
+	    </div>
+	    <div class = "row">
+		    <label>Caludo Wrangler - Billion Surya Lioe</label>
+	    </div>
+  </aside>
+
+  <main>
+    <div id="chartStage">
+      <div id="chartWrap">
+        <svg id="chart" xmlns="http://www.w3.org/2000/svg"></svg>
+        <div class="empty-state" id="emptyState">Load a TSV file to plot chromatograms</div>
+        <div id="tooltip"></div>
+      </div>
+    </div>
+    <div id="tablePanel"></div>
+  </main>
+</div>
+
+<script>
+(function () {
+  "use strict";
+
+  // ---------- palette ----------
+  var PALETTE_LIGHT = ['#2a78d6','#1baf7a','#eda100','#008300','#4a3aa7','#e34948','#e87ba4','#eb6834'];
+  var PALETTE_DARK  = ['#3987e5','#199e70','#c98500','#008300','#9085e9','#e66767','#d55181','#d95926'];
+  var DASH_PATTERNS = [null, '5,3', '2,2', '6,2,1,2'];
+
+  var CHROME = {
+    light: { surface: '#fcfcfb', primary: '#0b0b0b', secondary: '#52514e', muted: '#898781', gridline: '#e1e0d9', baseline: '#c3c2b7' },
+    dark:  { surface: '#1a1a19', primary: '#ffffff', secondary: '#c3c2b7', muted: '#898781', gridline: '#2c2c2a', baseline: '#383835' }
+  };
+
+  function currentTheme() {
+    var attr = document.documentElement.getAttribute('data-theme');
+    if (attr === 'dark' || attr === 'light') return attr;
+    return window.matchMedia && window.matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light';
+  }
+  function colorFor(i) {
+    var pal = currentTheme() === 'dark' ? PALETTE_DARK : PALETTE_LIGHT;
+    return pal[i % pal.length];
+  }
+  function dashFor(i) {
+    var pal = currentTheme() === 'dark' ? PALETTE_DARK : PALETTE_LIGHT;
+    var rep = Math.floor(i / pal.length);
+    return DASH_PATTERNS[Math.min(rep, DASH_PATTERNS.length - 1)];
+  }
+
+  // ---------- theme toggle ----------
+  var themeToggle = document.getElementById('themeToggle');
+  themeToggle.addEventListener('click', function () {
+    var cur = currentTheme();
+    document.documentElement.setAttribute('data-theme', cur === 'dark' ? 'light' : 'dark');
+    render();
+  });
+
+  // ---------- state ----------
+  var dataset = null;     // { xLabel, x: Float64Array, n }
+  var samples = [];       // [{ name, y: Float64Array, color, dash, visible, yMax }] in stacking order
+  var view = { xMin: 0, xMax: 1 };
+  var dragSrcIndex = null;
+  var isPanning = false, panStartX = 0, panStartDomain = null;
+  var loadedFileHandle = null;   // FileSystemFileHandle of the loaded TSV, when the browser supports it
+  var loadedBaseName = 'chromatogram';
+
+  function dataExtent() {
+    var xMin = Infinity, xMax = -Infinity;
+    for (var i = 0; i < dataset.x.length; i++) {
+      var xv = dataset.x[i];
+      if (xv === xv) { if (xv < xMin) xMin = xv; if (xv > xMax) xMax = xv; }
+    }
+    return { min: xMin, max: xMax };
+  }
+
+  var els = {
+    fileInput: document.getElementById('fileInput'),
+    dropZone: document.getElementById('dropZone'),
+    filenameLabel: document.getElementById('filenameLabel'),
+    sampleList: document.getElementById('sampleList'),
+    sampleCount: document.getElementById('sampleCount'),
+    toggleAllLink: document.getElementById('toggleAllLink'),
+    xMinInput: document.getElementById('xMinInput'),
+    xMaxInput: document.getElementById('xMaxInput'),
+    normalizeToggle: document.getElementById('normalizeToggle'),
+    offsetSlider: document.getElementById('offsetSlider'),
+    offsetNumber: document.getElementById('offsetNumber'),
+    autoOffsetBtn: document.getElementById('autoOffsetBtn'),
+    resetZoomBtn: document.getElementById('resetZoomBtn'),
+    gridlineOpacitySlider: document.getElementById('gridlineOpacitySlider'),
+    gridlineOpacityNumber: document.getElementById('gridlineOpacityNumber'),
+    axisTitleFontSlider: document.getElementById('axisTitleFontSlider'),
+    axisTitleFontNumber: document.getElementById('axisTitleFontNumber'),
+    tickFontSlider: document.getElementById('tickFontSlider'),
+    tickFontNumber: document.getElementById('tickFontNumber'),
+    grayscaleToggle: document.getElementById('grayscaleToggle'),
+    labelsToggle: document.getElementById('labelsToggle'),
+    labelAlignSelect: document.getElementById('labelAlignSelect'),
+    labelFontRow: document.getElementById('labelFontRow'),
+    labelFontSlider: document.getElementById('labelFontSlider'),
+    labelFontNumber: document.getElementById('labelFontNumber'),
+    labelOffsetRow: document.getElementById('labelOffsetRow'),
+    labelOffsetSlider: document.getElementById('labelOffsetSlider'),
+    labelOffsetNumber: document.getElementById('labelOffsetNumber'),
+    fixedSizeToggle: document.getElementById('fixedSizeToggle'),
+    sizeInputsRow: document.getElementById('sizeInputsRow'),
+    canvasWidthInput: document.getElementById('canvasWidthInput'),
+    canvasHeightInput: document.getElementById('canvasHeightInput'),
+    tableToggleBtn: document.getElementById('tableToggleBtn'),
+    tablePanel: document.getElementById('tablePanel'),
+    exportSvgBtn: document.getElementById('exportSvgBtn'),
+    svgFilenameInput: document.getElementById('svgFilenameInput'),
+    exportPngBtn: document.getElementById('exportPngBtn'),
+    exportSettingsBtn: document.getElementById('exportSettingsBtn'),
+    importSettingsBtn: document.getElementById('importSettingsBtn'),
+    settingsFileInput: document.getElementById('settingsFileInput'),
+    chart: document.getElementById('chart'),
+    chartStage: document.getElementById('chartStage'),
+    chartWrap: document.getElementById('chartWrap'),
+    emptyState: document.getElementById('emptyState'),
+    tooltip: document.getElementById('tooltip')
+  };
+
+  // ---------- TSV parsing ----------
+  function parseTSV(text) {
+    var lines = text.replace(/\r\n/g, '\n').replace(/\r/g, '\n').split('\n');
+    while (lines.length && lines[lines.length - 1].trim() === '') lines.pop();
+    if (lines.length < 2) throw new Error('File has no data rows.');
+    var header = lines[0].split('\t');
+    var xLabel = (header[0] || 'Time').trim();
+    var names = header.slice(1).map(function (s) { return s.trim(); });
+    var n = lines.length - 1;
+    var x = new Float64Array(n);
+    var cols = names.map(function () { return new Float64Array(n); });
+    for (var i = 1; i < lines.length; i++) {
+      var parts = lines[i].split('\t');
+      var xv = parseFloat(parts[0]);
+      x[i - 1] = xv;
+      for (var c = 0; c < names.length; c++) {
+        var v = parseFloat(parts[c + 1]);
+        cols[c][i - 1] = (v === v) ? v : NaN; // NaN check
+      }
+    }
+    return {
+      xLabel: xLabel,
+      x: x,
+      n: n,
+      series: names.map(function (name, i) { return { name: name, y: cols[i] }; })
+    };
+  }
+
+  function loadFile(file, handle) {
+    var reader = new FileReader();
+    reader.onload = function () {
+      try {
+        dataset = parseTSV(reader.result);
+      } catch (err) {
+        alert('Could not parse file: ' + err.message);
+        return;
+      }
+      loadedFileHandle = handle || null;
+      loadedBaseName = file.name.replace(/\.[^.\\/]+$/, '') || 'chromatogram';
+      els.filenameLabel.textContent = file.name;
+      samples = dataset.series.map(function (s, i) {
+        var finiteMax = 0;
+        for (var k = 0; k < s.y.length; k++) {
+          var av = Math.abs(s.y[k]);
+          if (av === av && av > finiteMax) finiteMax = av;
+        }
+        return { name: s.name, y: s.y, color: colorFor(i), dash: dashFor(i), visible: true, absMax: finiteMax || 1 };
+      });
+      var extent = dataExtent();
+      view.xMin = extent.min; view.xMax = extent.max;
+      resetOffsetRange();
+      buildSampleList();
+      els.emptyState.style.display = 'none';
+      render();
+    };
+    reader.readAsText(file);
+  }
+
+  els.fileInput.addEventListener('change', function (e) {
+    if (e.target.files[0]) loadFile(e.target.files[0]);
+  });
+  els.dropZone.addEventListener('click', function () {
+    if (window.showOpenFilePicker) {
+      window.showOpenFilePicker({
+        types: [{ description: 'TSV files', accept: { 'text/tab-separated-values': ['.tsv'], 'text/plain': ['.tsv', '.txt'] } }],
+        excludeAcceptAllOption: false,
+        multiple: false
+      }).then(function (handles) {
+        return handles[0].getFile().then(function (file) { loadFile(file, handles[0]); });
+      }).catch(function (err) {
+        if (err && err.name !== 'AbortError') els.fileInput.click();
+      });
+      return;
+    }
+    els.fileInput.click();
+  });
+  ['dragenter', 'dragover'].forEach(function (evt) {
+    els.dropZone.addEventListener(evt, function (e) { e.preventDefault(); els.dropZone.classList.add('drag-over'); });
+  });
+  ['dragleave', 'drop'].forEach(function (evt) {
+    els.dropZone.addEventListener(evt, function (e) { e.preventDefault(); els.dropZone.classList.remove('drag-over'); });
+  });
+  els.dropZone.addEventListener('drop', function (e) {
+    var file = e.dataTransfer.files[0];
+    if (!file) return;
+    var item = e.dataTransfer.items && e.dataTransfer.items[0];
+    if (item && item.getAsFileSystemHandle) {
+      item.getAsFileSystemHandle().then(function (handle) {
+        loadFile(file, handle && handle.kind === 'file' ? handle : null);
+      }).catch(function () { loadFile(file); });
+    } else {
+      loadFile(file);
+    }
+  });
+
+  // ---------- sample list (legend + reorder) ----------
+  function buildSampleList() {
+    els.sampleList.innerHTML = '';
+    els.sampleCount.textContent = samples.length + (samples.length === 1 ? ' sample' : ' samples');
+    samples.forEach(function (s, idx) {
+      var li = document.createElement('li');
+      li.draggable = true;
+      li.dataset.index = idx;
+
+      var handle = document.createElement('span');
+      handle.className = 'handle';
+      handle.textContent = '⋮⋮';
+      li.appendChild(handle);
+
+      var cb = document.createElement('input');
+      cb.type = 'checkbox';
+      cb.checked = s.visible;
+      cb.addEventListener('change', function () { s.visible = cb.checked; nameEl.classList.toggle('hidden-sample', !s.visible); render(); });
+      li.appendChild(cb);
+
+      var swatch = document.createElement('span');
+      swatch.className = 'swatch';
+      swatch.style.background = s.color;
+      if (s.dash) { swatch.style.background = s.color; swatch.style.opacity = '0.65'; }
+      li.appendChild(swatch);
+
+      var nameEl = document.createElement('span');
+      nameEl.className = 'sname' + (s.visible ? '' : ' hidden-sample');
+      nameEl.textContent = s.name; // textContent: untrusted header data
+      nameEl.title = s.name;
+      li.appendChild(nameEl);
+
+      li.addEventListener('dragstart', function (e) {
+        dragSrcIndex = idx;
+        li.classList.add('dragging');
+        e.dataTransfer.effectAllowed = 'move';
+      });
+      li.addEventListener('dragend', function () {
+        li.classList.remove('dragging');
+        Array.prototype.forEach.call(els.sampleList.children, function (c) {
+          c.classList.remove('drag-over-top', 'drag-over-bottom');
+        });
+      });
+      li.addEventListener('dragover', function (e) {
+        e.preventDefault();
+        var rect = li.getBoundingClientRect();
+        var before = (e.clientY - rect.top) < rect.height / 2;
+        li.classList.toggle('drag-over-top', before);
+        li.classList.toggle('drag-over-bottom', !before);
+      });
+      li.addEventListener('dragleave', function () {
+        li.classList.remove('drag-over-top', 'drag-over-bottom');
+      });
+      li.addEventListener('drop', function (e) {
+        e.preventDefault();
+        var targetIndex = parseInt(li.dataset.index, 10);
+        var rect = li.getBoundingClientRect();
+        var before = (e.clientY - rect.top) < rect.height / 2;
+        if (dragSrcIndex === null) return;
+        var moved = samples.splice(dragSrcIndex, 1)[0];
+        var insertAt = targetIndex + (before ? 0 : 1);
+        if (dragSrcIndex < insertAt) insertAt--;
+        samples.splice(insertAt, 0, moved);
+        dragSrcIndex = null;
+        buildSampleList();
+        render();
+      });
+
+      els.sampleList.appendChild(li);
+    });
+  }
+
+  els.toggleAllLink.addEventListener('click', function () {
+    var anyVisible = samples.some(function (s) { return s.visible; });
+    samples.forEach(function (s) { s.visible = !anyVisible; });
+    buildSampleList();
+    render();
+  });
+
+  // ---------- offset controls ----------
+  function resetOffsetRange() {
+    var norm = els.normalizeToggle.checked;
+    if (norm) {
+      els.offsetSlider.min = 0; els.offsetSlider.max = 300; els.offsetSlider.step = 1;
+      els.offsetSlider.value = 120; els.offsetNumber.value = 120;
+    } else {
+      var globalMax = 1;
+      samples.forEach(function (s) { if (s.absMax > globalMax) globalMax = s.absMax; });
+      var def = globalMax * 1.1;
+      els.offsetSlider.min = 0; els.offsetSlider.max = (globalMax * 3).toFixed(4);
+      els.offsetSlider.step = (globalMax / 200) || 1;
+      els.offsetSlider.value = def; els.offsetNumber.value = round(def, 4);
+    }
+  }
+  function round(v, digits) {
+    var p = Math.pow(10, digits);
+    return Math.round(v * p) / p;
+  }
+  els.normalizeToggle.addEventListener('change', function () { resetOffsetRange(); render(); });
+  els.offsetSlider.addEventListener('input', function () { els.offsetNumber.value = round(parseFloat(els.offsetSlider.value), 4); render(); });
+  els.offsetNumber.addEventListener('input', function () {
+    var v = parseFloat(els.offsetNumber.value);
+    if (v === v) { els.offsetSlider.value = v; render(); }
+  });
+  els.autoOffsetBtn.addEventListener('click', function () {
+    var norm = els.normalizeToggle.checked;
+    if (norm) {
+      els.offsetSlider.value = 120; els.offsetNumber.value = 120;
+    } else {
+      var visMax = 1;
+      samples.forEach(function (s) { if (s.visible && s.absMax > visMax) visMax = s.absMax; });
+      var def = visMax * 1.1;
+      els.offsetSlider.max = (visMax * 3).toFixed(4);
+      els.offsetSlider.value = def; els.offsetNumber.value = round(def, 4);
+    }
+    render();
+  });
+  els.resetZoomBtn.addEventListener('click', function () {
+    if (!dataset) return;
+    var extent = dataExtent();
+    view.xMin = extent.min; view.xMax = extent.max;
+    render();
+  });
+
+  // ---------- X range inputs ----------
+  function applyXRangeInput() {
+    if (!dataset) return;
+    var extent = dataExtent();
+    var lo = parseFloat(els.xMinInput.value);
+    var hi = parseFloat(els.xMaxInput.value);
+    if (!(lo === lo)) lo = extent.min;
+    if (!(hi === hi)) hi = extent.max;
+    lo = Math.max(extent.min, Math.min(lo, extent.max));
+    hi = Math.max(extent.min, Math.min(hi, extent.max));
+    if (hi <= lo) { hi = lo + (extent.max - extent.min) / 5000; }
+    view.xMin = lo; view.xMax = hi;
+    els.xMinInput.value = round(lo, 4);
+    els.xMaxInput.value = round(hi, 4);
+    render();
+  }
+  els.xMinInput.addEventListener('change', applyXRangeInput);
+  els.xMaxInput.addEventListener('change', applyXRangeInput);
+
+  // ---------- gridline opacity & grayscale mode ----------
+  els.gridlineOpacitySlider.addEventListener('input', function () {
+    els.gridlineOpacityNumber.value = els.gridlineOpacitySlider.value;
+    render();
+  });
+  els.gridlineOpacityNumber.addEventListener('input', function () {
+    var v = parseFloat(els.gridlineOpacityNumber.value);
+    if (v === v) {
+      v = Math.max(0, Math.min(100, v));
+      els.gridlineOpacitySlider.value = v;
+      render();
+    }
+  });
+  els.grayscaleToggle.addEventListener('change', render);
+
+  // ---------- axis text sizing ----------
+  els.axisTitleFontSlider.addEventListener('input', function () {
+    els.axisTitleFontNumber.value = els.axisTitleFontSlider.value;
+    render();
+  });
+  els.axisTitleFontNumber.addEventListener('input', function () {
+    var v = parseFloat(els.axisTitleFontNumber.value);
+    if (v === v) {
+      v = Math.max(50, Math.min(250, v));
+      els.axisTitleFontSlider.value = v;
+      render();
+    }
+  });
+  els.tickFontSlider.addEventListener('input', function () {
+    els.tickFontNumber.value = els.tickFontSlider.value;
+    render();
+  });
+  els.tickFontNumber.addEventListener('input', function () {
+    var v = parseFloat(els.tickFontNumber.value);
+    if (v === v) {
+      v = Math.max(50, Math.min(250, v));
+      els.tickFontSlider.value = v;
+      render();
+    }
+  });
+
+  // ---------- trace labels ----------
+  els.labelsToggle.addEventListener('change', function () {
+    var show = els.labelsToggle.checked;
+    els.labelFontRow.style.display = show ? 'flex' : 'none';
+    els.labelOffsetRow.style.display = show ? 'flex' : 'none';
+    render();
+  });
+  els.labelAlignSelect.addEventListener('change', render);
+  els.labelFontSlider.addEventListener('input', function () {
+    els.labelFontNumber.value = els.labelFontSlider.value;
+    render();
+  });
+  els.labelFontNumber.addEventListener('input', function () {
+    var v = parseFloat(els.labelFontNumber.value);
+    if (v === v) {
+      v = Math.max(50, Math.min(250, v));
+      els.labelFontSlider.value = v;
+      render();
+    }
+  });
+  els.labelOffsetSlider.addEventListener('input', function () {
+    els.labelOffsetNumber.value = els.labelOffsetSlider.value;
+    render();
+  });
+  els.labelOffsetNumber.addEventListener('input', function () {
+    var v = parseFloat(els.labelOffsetNumber.value);
+    if (v === v) {
+      els.labelOffsetSlider.value = v;
+      render();
+    }
+  });
+
+  // ---------- canvas size (export dimensions) ----------
+  function applyCanvasSize() {
+    if (els.fixedSizeToggle.checked) {
+      els.sizeInputsRow.style.display = 'flex';
+      els.chartWrap.classList.add('fixed-size');
+      var w = parseInt(els.canvasWidthInput.value, 10);
+      var h = parseInt(els.canvasHeightInput.value, 10);
+      if (!(w > 0)) w = 800;
+      if (!(h > 0)) h = 500;
+      els.chartWrap.style.width = w + 'px';
+      els.chartWrap.style.height = h + 'px';
+    } else {
+      els.sizeInputsRow.style.display = 'none';
+      els.chartWrap.classList.remove('fixed-size');
+      els.chartWrap.style.width = '';
+      els.chartWrap.style.height = '';
+    }
+    render();
+  }
+  els.fixedSizeToggle.addEventListener('change', function () {
+    if (els.fixedSizeToggle.checked && !els.canvasWidthInput.value) {
+      var rect = els.chartWrap.getBoundingClientRect();
+      els.canvasWidthInput.value = Math.round(rect.width);
+      els.canvasHeightInput.value = Math.round(rect.height);
+    }
+    applyCanvasSize();
+  });
+  els.canvasWidthInput.addEventListener('input', applyCanvasSize);
+  els.canvasHeightInput.addEventListener('input', applyCanvasSize);
+
+  // ---------- nice ticks ----------
+  function niceStep(rough) {
+    if (rough <= 0 || !isFinite(rough)) return 1;
+    var exp = Math.floor(Math.log10(rough));
+    var base = Math.pow(10, exp);
+    var frac = rough / base;
+    var niceFrac = frac < 1.5 ? 1 : frac < 3 ? 2 : frac < 7 ? 5 : 10;
+    return niceFrac * base;
+  }
+  function ticks(min, max, count) {
+    var step = niceStep((max - min) / count);
+    var start = Math.ceil(min / step) * step;
+    var out = [];
+    for (var v = start; v <= max + step * 1e-6; v += step) out.push(round(v, 6));
+    return out;
+  }
+
+  // ---------- decimation (min/max per bucket, preserves peak shape) ----------
+  function decimateIndices(lo, hi, y, maxPoints) {
+    var n = hi - lo;
+    if (n <= maxPoints) {
+      var arr = [];
+      for (var i = lo; i < hi; i++) arr.push(i);
+      return arr;
+    }
+    var buckets = Math.max(1, Math.floor(maxPoints / 2));
+    var bucketSize = n / buckets;
+    var out = [];
+    for (var b = 0; b < buckets; b++) {
+      var s = lo + Math.floor(b * bucketSize);
+      var e = lo + Math.floor((b + 1) * bucketSize);
+      if (e <= s) continue;
+      var minI = s, maxI = s;
+      for (var i2 = s; i2 < e; i2++) {
+        var yv = y[i2];
+        if (yv !== yv) continue;
+        if (yv < y[minI] || y[minI] !== y[minI]) minI = i2;
+        if (yv > y[maxI] || y[maxI] !== y[maxI]) maxI = i2;
+      }
+      if (minI <= maxI) { out.push(minI, maxI); } else { out.push(maxI, minI); }
+    }
+    return out;
+  }
+
+  // ---------- SVG helpers ----------
+  var SVG_NS = 'http://www.w3.org/2000/svg';
+  function svgEl(tag, attrs) {
+    var el = document.createElementNS(SVG_NS, tag);
+    for (var k in attrs) el.setAttribute(k, attrs[k]);
+    return el;
+  }
+
+  // ---------- render ----------
+  var PAD = { left: 16, right: 16, top: 16, bottom: 34 };
+
+  function render() {
+    var svg = els.chart;
+    svg.innerHTML = '';
+    if (!dataset || samples.length === 0) return;
+
+    var theme = CHROME[currentTheme()];
+    var rect = els.chartWrap.getBoundingClientRect();
+    var W = Math.max(200, rect.width), H = Math.max(150, rect.height);
+    svg.setAttribute('viewBox', '0 0 ' + W + ' ' + H);
+
+    var tickFontSize = 10 * ((parseFloat(els.tickFontSlider.value) || 100) / 100);
+    var axisTitleFontSize = 11 * ((parseFloat(els.axisTitleFontSlider.value) || 100) / 100);
+    var padBottom = Math.max(34, tickFontSize + axisTitleFontSize + 18);
+
+    var plotLeft = PAD.left, plotRight = W - PAD.right;
+    var plotTop = PAD.top, plotBottom = H - padBottom;
+    var plotW = plotRight - plotLeft, plotH = plotBottom - plotTop;
+
+    var xMin = view.xMin, xMax = view.xMax;
+    if (!(xMax > xMin)) { xMax = xMin + 1; }
+    function xScale(v) { return plotLeft + (v - xMin) / (xMax - xMin) * plotW; }
+
+    if (document.activeElement !== els.xMinInput) els.xMinInput.value = round(xMin, 4);
+    if (document.activeElement !== els.xMaxInput) els.xMaxInput.value = round(xMax, 4);
+
+    var norm = els.normalizeToggle.checked;
+    var offset = parseFloat(els.offsetNumber.value) || 0;
+
+    // find index range covering [xMin,xMax] (x assumed monotonic non-decreasing)
+    var x = dataset.x, n = dataset.n;
+    var lo = lowerBound(x, xMin), hi = upperBound(x, xMax);
+    lo = Math.max(0, lo - 1); hi = Math.min(n, hi + 1);
+
+    var visibleSamples = samples.filter(function (s) { return s.visible; });
+    var yMax = 0;
+    visibleSamples.forEach(function (s, vi) {
+      var scale = norm ? (100 / s.absMax) : 1;
+      var top = vi * offset;
+      for (var i = lo; i < hi; i++) {
+        var yv = s.y[i];
+        if (yv !== yv) continue;
+        var val = yv * scale + top;
+        if (val > yMax) yMax = val;
+      }
+    });
+    if (yMax <= 0) yMax = 1;
+    yMax *= 1.08;
+    function yScale(v) { return plotBottom - (v / yMax) * plotH; }
+
+    // gridlines + x axis
+    var gGrid = svgEl('g', {});
+    var gAxis = svgEl('g', {});
+    var gridOpacity = (parseFloat(els.gridlineOpacitySlider.value) || 0) / 100;
+    var xt = ticks(xMin, xMax, Math.max(3, Math.floor(plotW / 90)));
+    xt.forEach(function (t) {
+      var px = xScale(t);
+      gGrid.appendChild(svgEl('line', { x1: px, x2: px, y1: plotTop, y2: plotBottom, stroke: theme.gridline, 'stroke-width': 1, 'stroke-opacity': gridOpacity }));
+      var lbl = svgEl('text', { x: px, y: plotBottom + tickFontSize + 6, 'text-anchor': 'middle', fill: theme.muted, 'font-size': tickFontSize.toFixed(2) });
+      lbl.textContent = formatTick(t, xt);
+      gAxis.appendChild(lbl);
+    });
+    gAxis.appendChild(svgEl('line', { x1: plotLeft, x2: plotRight, y1: plotBottom, y2: plotBottom, stroke: theme.baseline, 'stroke-width': 1 }));
+    var xLabelEl = svgEl('text', { x: (plotLeft + plotRight) / 2, y: H - 6, 'text-anchor': 'middle', fill: theme.secondary, 'font-size': axisTitleFontSize.toFixed(2) });
+    xLabelEl.textContent = dataset.xLabel;
+    gAxis.appendChild(xLabelEl);
+
+    svg.appendChild(gGrid);
+    svg.appendChild(gAxis);
+
+    // traces
+    var gTraces = svgEl('g', {});
+    var maxPointsPerTrace = Math.max(400, Math.floor(plotW * 3));
+    var grayscale = els.grayscaleToggle.checked;
+    visibleSamples.forEach(function (s, vi) {
+      var scale = norm ? (100 / s.absMax) : 1;
+      var top = vi * offset;
+      var idxs = decimateIndices(lo, hi, s.y, maxPointsPerTrace);
+      var d = '';
+      var started = false;
+      for (var k = 0; k < idxs.length; k++) {
+        var i = idxs[k];
+        var xv = x[i], yv = s.y[i];
+        if (xv !== xv || yv !== yv) { started = false; continue; }
+        var px = xScale(xv), py = yScale(yv * scale + top);
+        d += (started ? 'L' : 'M') + px.toFixed(2) + ',' + py.toFixed(2) + ' ';
+        started = true;
+      }
+      var path = svgEl('path', {
+        d: d.trim(), fill: 'none', stroke: grayscale ? theme.primary : s.color, 'stroke-width': 1.5,
+        'stroke-linejoin': 'round', 'stroke-linecap': 'round'
+      });
+      if (!grayscale && s.dash) path.setAttribute('stroke-dasharray', s.dash);
+      gTraces.appendChild(path);
+    });
+    svg.appendChild(gTraces);
+
+    // trace labels (from sample/column names)
+    if (els.labelsToggle.checked) {
+      var gLabels = svgEl('g', {});
+      var align = els.labelAlignSelect.value;
+      var fontScale = (parseFloat(els.labelFontSlider.value) || 100) / 100;
+      var labelFontSize = 11 * fontScale;
+      var labelOffsetPx = parseFloat(els.labelOffsetNumber.value) || 0;
+      var labelX = align === 'left' ? plotLeft + 4 : plotRight - 4;
+      var labelAnchor = align === 'left' ? 'start' : 'end';
+      visibleSamples.forEach(function (s, vi) {
+        var top = vi * offset;
+        var ly = yScale(top) - labelOffsetPx;
+        ly = Math.max(plotTop + labelFontSize, Math.min(plotBottom - 2, ly));
+        var lbl = svgEl('text', {
+          x: labelX, y: ly, 'text-anchor': labelAnchor, fill: theme.primary,
+          'font-size': labelFontSize.toFixed(2)
+        });
+        lbl.textContent = s.name;
+        gLabels.appendChild(lbl);
+      });
+      svg.appendChild(gLabels);
+    }
+
+    // stash scales for interaction
+    svg.__scales = { xScale: xScale, yScale: yScale, xMin: xMin, xMax: xMax, plotLeft: plotLeft, plotRight: plotRight, plotTop: plotTop, plotBottom: plotBottom, lo: lo, hi: hi, norm: norm, offset: offset, visibleSamples: visibleSamples };
+
+    updateTable();
+  }
+
+  function formatTick(v, allTicks) {
+    var step = allTicks.length > 1 ? Math.abs(allTicks[1] - allTicks[0]) : Math.abs(v) || 1;
+    var digits = step < 1 ? Math.min(4, Math.max(0, -Math.floor(Math.log10(step)) + 1)) : (step < 10 ? 1 : 0);
+    return v.toFixed(digits);
+  }
+
+  function lowerBound(arr, target) {
+    var lo = 0, hi = arr.length;
+    while (lo < hi) { var mid = (lo + hi) >> 1; if (arr[mid] < target) lo = mid + 1; else hi = mid; }
+    return lo;
+  }
+  function upperBound(arr, target) {
+    var lo = 0, hi = arr.length;
+    while (lo < hi) { var mid = (lo + hi) >> 1; if (arr[mid] <= target) lo = mid + 1; else hi = mid; }
+    return lo;
+  }
+
+  // ---------- zoom & pan ----------
+  els.chart.addEventListener('wheel', function (e) {
+    if (!dataset) return;
+    e.preventDefault();
+    var sc = els.chart.__scales;
+    if (!sc) return;
+    var rect = els.chart.getBoundingClientRect();
+    var mx = (e.clientX - rect.left) * (sc.plotRight - sc.plotLeft + PAD.left + PAD.right) / rect.width; // approx using viewBox coords
+    var svgRect = els.chart.viewBox.baseVal;
+    var scaleX = svgRect.width / rect.width;
+    var px = (e.clientX - rect.left) * scaleX;
+    var dataX = sc.xMin + (px - sc.plotLeft) / (sc.plotRight - sc.plotLeft) * (sc.xMax - sc.xMin);
+    var factor = e.deltaY > 0 ? 1.15 : 1 / 1.15;
+    var newMin = dataX - (dataX - view.xMin) * factor;
+    var newMax = dataX + (view.xMax - dataX) * factor;
+    var fullExtent = dataExtent();
+    var fullMin = fullExtent.min, fullMax = fullExtent.max;
+    var minSpan = (fullMax - fullMin) / 5000;
+    if (newMax - newMin < minSpan) return;
+    view.xMin = Math.max(fullMin - (fullMax - fullMin) * 0.02, newMin);
+    view.xMax = Math.min(fullMax + (fullMax - fullMin) * 0.02, newMax);
+    render();
+  }, { passive: false });
+
+  els.chart.addEventListener('mousedown', function (e) {
+    if (!dataset) return;
+    isPanning = true;
+    panStartX = e.clientX;
+    panStartDomain = { min: view.xMin, max: view.xMax };
+    els.chart.classList.add('panning');
+  });
+  window.addEventListener('mousemove', function (e) {
+    if (isPanning) {
+      var sc = els.chart.__scales;
+      if (!sc) return;
+      var rect = els.chart.getBoundingClientRect();
+      var svgRect = els.chart.viewBox.baseVal;
+      var scaleX = svgRect.width / rect.width;
+      var dxPx = (e.clientX - panStartX) * scaleX;
+      var dxData = -dxPx / (sc.plotRight - sc.plotLeft) * (panStartDomain.max - panStartDomain.min);
+      view.xMin = panStartDomain.min + dxData;
+      view.xMax = panStartDomain.max + dxData;
+      render();
+    } else {
+      handleHover(e);
+    }
+  });
+  window.addEventListener('mouseup', function () {
+    isPanning = false;
+    els.chart.classList.remove('panning');
+  });
+  els.chart.addEventListener('mouseleave', function () { els.tooltip.style.display = 'none'; });
+
+  function handleHover(e) {
+    var sc = els.chart.__scales;
+    if (!sc || !dataset) return;
+    var rect = els.chart.getBoundingClientRect();
+    var svgRect = els.chart.viewBox.baseVal;
+    var scaleX = svgRect.width / rect.width;
+    var scaleY = svgRect.height / rect.height;
+    var px = (e.clientX - rect.left) * scaleX;
+    var py = (e.clientY - rect.top) * scaleY;
+    if (px < sc.plotLeft || px > sc.plotRight || py < sc.plotTop || py > sc.plotBottom) {
+      els.tooltip.style.display = 'none';
+      return;
+    }
+    var dataX = sc.xMin + (px - sc.plotLeft) / (sc.plotRight - sc.plotLeft) * (sc.xMax - sc.xMin);
+    var idx = lowerBound(dataset.x, dataX);
+    if (idx > 0 && (idx >= dataset.x.length || Math.abs(dataset.x[idx - 1] - dataX) < Math.abs(dataset.x[idx] - dataX))) idx -= 1;
+    idx = Math.max(0, Math.min(dataset.n - 1, idx));
+
+    els.tooltip.innerHTML = '';
+    var xRow = document.createElement('div');
+    xRow.className = 't-x';
+    xRow.textContent = dataset.xLabel + ' = ' + dataset.x[idx].toFixed(4);
+    els.tooltip.appendChild(xRow);
+
+    var tooltipGrayscale = els.grayscaleToggle.checked;
+    var tooltipInk = CHROME[currentTheme()].primary;
+    sc.visibleSamples.forEach(function (s) {
+      var yv = s.y[idx];
+      var row = document.createElement('div');
+      row.className = 't-row';
+      var key = document.createElement('span');
+      key.className = 't-key';
+      key.style.background = tooltipGrayscale ? tooltipInk : s.color;
+      row.appendChild(key);
+      var val = document.createElement('span');
+      val.className = 't-val';
+      val.textContent = (yv === yv) ? formatValue(yv) : '—';
+      row.appendChild(val);
+      var name = document.createElement('span');
+      name.className = 't-name';
+      name.textContent = s.name;
+      row.appendChild(name);
+      els.tooltip.appendChild(row);
+    });
+
+    var wrapRect = els.chartWrap.getBoundingClientRect();
+    var left = e.clientX - wrapRect.left + 14;
+    var top = e.clientY - wrapRect.top + 14;
+    els.tooltip.style.left = left + 'px';
+    els.tooltip.style.top = top + 'px';
+    els.tooltip.style.display = 'block';
+  }
+  function formatValue(v) {
+    var av = Math.abs(v);
+    if (av !== 0 && (av < 0.001 || av >= 1e6)) return v.toExponential(3);
+    return (Math.round(v * 1000) / 1000).toString();
+  }
+
+  // ---------- data table ----------
+  els.tableToggleBtn.addEventListener('click', function () {
+    els.tablePanel.classList.toggle('open');
+    if (els.tablePanel.classList.contains('open')) updateTable();
+  });
+  function updateTable() {
+    if (!els.tablePanel.classList.contains('open') || !dataset) return;
+    var sc = els.chart.__scales;
+    if (!sc) return;
+    var lo = sc.lo, hi = sc.hi;
+    var rowCount = hi - lo;
+    els.tablePanel.innerHTML = '';
+    if (rowCount > 2000) {
+      var note = document.createElement('div');
+      note.className = 'note';
+      note.textContent = 'Zoom in to view the data table (' + rowCount + ' rows in view, limit 2000).';
+      els.tablePanel.appendChild(note);
+      return;
+    }
+    var table = document.createElement('table');
+    var thead = document.createElement('thead');
+    var htr = document.createElement('tr');
+    var hth = document.createElement('th'); hth.textContent = dataset.xLabel; htr.appendChild(hth);
+    sc.visibleSamples.forEach(function (s) {
+      var th = document.createElement('th'); th.textContent = s.name; htr.appendChild(th);
+    });
+    thead.appendChild(htr);
+    table.appendChild(thead);
+    var tbody = document.createElement('tbody');
+    for (var i = lo; i < hi; i++) {
+      var tr = document.createElement('tr');
+      var td = document.createElement('td'); td.textContent = dataset.x[i].toFixed(4); tr.appendChild(td);
+      sc.visibleSamples.forEach(function (s) {
+        var v = s.y[i];
+        var td2 = document.createElement('td');
+        td2.textContent = (v === v) ? formatValue(v) : '';
+        tr.appendChild(td2);
+      });
+      tbody.appendChild(tr);
+    }
+    table.appendChild(tbody);
+    els.tablePanel.appendChild(table);
+  }
+
+  // ---------- export ----------
+  function serializedSvg() {
+    var svg = els.chart;
+    var clone = svg.cloneNode(true);
+    clone.setAttribute('xmlns', SVG_NS);
+    return new XMLSerializer().serializeToString(clone);
+  }
+  function download(filename, blob) {
+    var url = URL.createObjectURL(blob);
+    var a = document.createElement('a');
+    a.href = url; a.download = filename;
+    document.body.appendChild(a); a.click(); document.body.removeChild(a);
+    URL.revokeObjectURL(url);
+  }
+  function sanitizeFilename(name) {
+    return name.replace(/[\\/:*?"<>|]/g, '_').trim();
+  }
+
+  // Saves via the native Save dialog (opened in the loaded TSV's folder when possible)
+  // when the browser supports the File System Access API; otherwise falls back to a
+  // plain browser download. Must be called synchronously from a click handler so the
+  // save-picker call still counts as user-initiated.
+  function saveBlob(blob, suggestedName, description, mimeType, extension) {
+    if (window.showSaveFilePicker) {
+      var opts = { suggestedName: suggestedName, types: [{ description: description, accept: {} }] };
+      opts.types[0].accept[mimeType] = ['.' + extension];
+      if (loadedFileHandle) opts.startIn = loadedFileHandle;
+      return window.showSaveFilePicker(opts).then(function (handle) {
+        return handle.createWritable().then(function (writable) {
+          return writable.write(blob).then(function () { return writable.close(); });
+        });
+      }).catch(function (err) {
+        if (err && err.name === 'AbortError') return; // user cancelled — do nothing
+        download(suggestedName, blob);
+      });
+    }
+    download(suggestedName, blob);
+    return Promise.resolve();
+  }
+
+  els.exportSvgBtn.addEventListener('click', function () {
+    if (!dataset) return;
+    var svgStr = serializedSvg();
+    var custom = sanitizeFilename(els.svgFilenameInput.value || '');
+    var name = custom || loadedBaseName;
+    if (!/\.svg$/i.test(name)) name += '.svg';
+    saveBlob(new Blob([svgStr], { type: 'image/svg+xml' }), name, 'SVG image', 'image/svg+xml', 'svg');
+  });
+  if (els.exportPngBtn) {
+    els.exportPngBtn.addEventListener('click', function () {
+      if (!dataset) return;
+      var pngName = loadedBaseName + '.png';
+      var handlePromise;
+      if (window.showSaveFilePicker) {
+        var opts = { suggestedName: pngName, types: [{ description: 'PNG image', accept: { 'image/png': ['.png'] } }] };
+        if (loadedFileHandle) opts.startIn = loadedFileHandle;
+        handlePromise = window.showSaveFilePicker(opts).catch(function (err) {
+          return (err && err.name === 'AbortError') ? null : undefined;
+        });
+      } else {
+        handlePromise = Promise.resolve(undefined);
+      }
+      handlePromise.then(function (handle) {
+        if (handle === null) return; // user cancelled the save dialog
+        var svgStr = serializedSvg();
+        var svgW = els.chart.viewBox.baseVal.width, svgH = els.chart.viewBox.baseVal.height;
+        var scaleFactor = 2;
+        var img = new Image();
+        var svgBlob = new Blob([svgStr], { type: 'image/svg+xml;charset=utf-8' });
+        var url = URL.createObjectURL(svgBlob);
+        img.onload = function () {
+          var canvas = document.createElement('canvas');
+          canvas.width = svgW * scaleFactor; canvas.height = svgH * scaleFactor;
+          var ctx = canvas.getContext('2d');
+          ctx.clearRect(0, 0, canvas.width, canvas.height);
+          ctx.scale(scaleFactor, scaleFactor);
+          ctx.drawImage(img, 0, 0);
+          URL.revokeObjectURL(url);
+          canvas.toBlob(function (blob) {
+            if (handle) {
+              handle.createWritable().then(function (writable) {
+                return writable.write(blob).then(function () { return writable.close(); });
+              }).catch(function () { download(pngName, blob); });
+            } else {
+              download(pngName, blob);
+            }
+          }, 'image/png');
+        };
+        img.src = url;
+      });
+    });
+  }
+
+  // ---------- settings export/import (display config only, no data) ----------
+  function collectSettings() {
+    return {
+      version: 1,
+      normalize: els.normalizeToggle.checked,
+      offset: parseFloat(els.offsetNumber.value) || 0,
+      gridlineOpacity: parseFloat(els.gridlineOpacityNumber.value) || 0,
+      grayscale: els.grayscaleToggle.checked,
+      axisTitleFontScale: parseFloat(els.axisTitleFontNumber.value) || 100,
+      tickFontScale: parseFloat(els.tickFontNumber.value) || 100,
+      labels: {
+        enabled: els.labelsToggle.checked,
+        align: els.labelAlignSelect.value,
+        fontScale: parseFloat(els.labelFontNumber.value) || 100,
+        vOffset: parseFloat(els.labelOffsetNumber.value) || 0
+      },
+      canvas: {
+        fixed: els.fixedSizeToggle.checked,
+        width: parseInt(els.canvasWidthInput.value, 10) || null,
+        height: parseInt(els.canvasHeightInput.value, 10) || null
+      },
+      theme: document.documentElement.getAttribute('data-theme') || null
+    };
+  }
+
+  function applySettings(s) {
+    if (!s || typeof s !== 'object') return;
+    if (typeof s.normalize === 'boolean') els.normalizeToggle.checked = s.normalize;
+    if (typeof s.offset === 'number') {
+      var offVal = s.offset;
+      if (offVal > parseFloat(els.offsetSlider.max)) els.offsetSlider.max = (offVal * 1.2).toFixed(4);
+      if (offVal < parseFloat(els.offsetSlider.min)) els.offsetSlider.min = Math.min(0, offVal);
+      els.offsetSlider.value = offVal;
+      els.offsetNumber.value = offVal;
+    }
+    if (typeof s.gridlineOpacity === 'number') {
+      var g = Math.max(0, Math.min(100, s.gridlineOpacity));
+      els.gridlineOpacitySlider.value = g; els.gridlineOpacityNumber.value = g;
+    }
+    if (typeof s.grayscale === 'boolean') els.grayscaleToggle.checked = s.grayscale;
+    if (typeof s.axisTitleFontScale === 'number') {
+      var a = Math.max(50, Math.min(250, s.axisTitleFontScale));
+      els.axisTitleFontSlider.value = a; els.axisTitleFontNumber.value = a;
+    }
+    if (typeof s.tickFontScale === 'number') {
+      var tk = Math.max(50, Math.min(250, s.tickFontScale));
+      els.tickFontSlider.value = tk; els.tickFontNumber.value = tk;
+    }
+    if (s.labels) {
+      if (typeof s.labels.enabled === 'boolean') {
+        els.labelsToggle.checked = s.labels.enabled;
+        els.labelFontRow.style.display = s.labels.enabled ? 'flex' : 'none';
+        els.labelOffsetRow.style.display = s.labels.enabled ? 'flex' : 'none';
+      }
+      if (s.labels.align === 'left' || s.labels.align === 'right') els.labelAlignSelect.value = s.labels.align;
+      if (typeof s.labels.fontScale === 'number') {
+        var lf = Math.max(50, Math.min(250, s.labels.fontScale));
+        els.labelFontSlider.value = lf; els.labelFontNumber.value = lf;
+      }
+      if (typeof s.labels.vOffset === 'number') {
+        els.labelOffsetSlider.value = s.labels.vOffset; els.labelOffsetNumber.value = s.labels.vOffset;
+      }
+    }
+    if (typeof s.theme === 'string' && (s.theme === 'light' || s.theme === 'dark')) {
+      document.documentElement.setAttribute('data-theme', s.theme);
+    } else if (s.theme === null) {
+      document.documentElement.removeAttribute('data-theme');
+    }
+    if (s.canvas) {
+      if (typeof s.canvas.fixed === 'boolean') els.fixedSizeToggle.checked = s.canvas.fixed;
+      if (s.canvas.width) els.canvasWidthInput.value = s.canvas.width;
+      if (s.canvas.height) els.canvasHeightInput.value = s.canvas.height;
+      applyCanvasSize();
+    }
+    render();
+  }
+
+  els.exportSettingsBtn.addEventListener('click', function () {
+    var blob = new Blob([JSON.stringify(collectSettings(), null, 2)], { type: 'application/json' });
+    saveBlob(blob, loadedBaseName + '_settings.json', 'JSON settings', 'application/json', 'json');
+  });
+  els.importSettingsBtn.addEventListener('click', function () { els.settingsFileInput.click(); });
+  els.settingsFileInput.addEventListener('change', function (e) {
+    var file = e.target.files[0];
+    if (!file) return;
+    var reader = new FileReader();
+    reader.onload = function () {
+      try {
+        applySettings(JSON.parse(reader.result));
+      } catch (err) {
+        alert('Could not parse settings file: ' + err.message);
+      }
+    };
+    reader.readAsText(file);
+    els.settingsFileInput.value = '';
+  });
+
+  // ---------- resize ----------
+  if (window.ResizeObserver) {
+    new ResizeObserver(function () { render(); }).observe(els.chartWrap);
+  } else {
+    window.addEventListener('resize', render);
+  }
+})();
+</script>
+</body>
+</html>
