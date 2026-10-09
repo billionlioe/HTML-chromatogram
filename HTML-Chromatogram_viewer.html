@@ -212,9 +212,18 @@
         <label><input type="checkbox" id="normalizeToggle" checked> Normalize each trace</label>
       </div>
       <div class="row">
+        <label title="Scale every trace to the same max value (overrides Normalize)"><input type="checkbox" id="sharedMaxToggle"> Same Y max for all</label>
+        <input type="number" id="sharedMaxInput" step="any" min="0" style="margin-left:auto; display:none;">
+      </div>
+      <div class="row">
         <label style="flex:0 0 auto;">Offset</label>
         <input type="range" id="offsetSlider" min="0" max="300" step="1" value="120">
         <input type="number" id="offsetNumber" value="120">
+      </div>
+      <div class="row">
+        <label style="flex:0 0 auto;">Baseline gap</label>
+        <input type="range" id="baseGapSlider" min="0" max="300" step="1" value="0">
+        <input type="number" id="baseGapNumber" value="0">
       </div>
       <div class="btnrow">
         <button id="autoOffsetBtn">Auto offset</button>
@@ -245,6 +254,17 @@
       <div class="row">
         <input type="range" id="tickFontSlider" min="50" max="250" step="5" value="150">
         <input type="number" id="tickFontNumber" min="50" max="250" value="150">
+      </div>
+      <div class="row">
+        <label><input type="checkbox" id="yAxisToggle">Per-trace Y axis</label>
+        <select id="yAxisUnitsSelect" style="margin-left:auto; display:none;">
+          <option value="raw" selected>Raw</option>
+          <option value="pct">%</option>
+        </select>
+      </div>
+      <div class="row" id="yAxisTitleRow" style="display:none;">
+        <label style="flex:0 0 auto;">Y title</label>
+        <input type="text" id="yAxisTitleInput" placeholder="e.g. Intensity (counts)">
       </div>
       <div class="row">
         <label><input type="checkbox" id="labelsToggle">Trace labels</label>
@@ -384,8 +404,12 @@
     xMinInput: document.getElementById('xMinInput'),
     xMaxInput: document.getElementById('xMaxInput'),
     normalizeToggle: document.getElementById('normalizeToggle'),
+    sharedMaxToggle: document.getElementById('sharedMaxToggle'),
+    sharedMaxInput: document.getElementById('sharedMaxInput'),
     offsetSlider: document.getElementById('offsetSlider'),
     offsetNumber: document.getElementById('offsetNumber'),
+    baseGapSlider: document.getElementById('baseGapSlider'),
+    baseGapNumber: document.getElementById('baseGapNumber'),
     autoOffsetBtn: document.getElementById('autoOffsetBtn'),
     resetZoomBtn: document.getElementById('resetZoomBtn'),
     gridlineOpacitySlider: document.getElementById('gridlineOpacitySlider'),
@@ -395,6 +419,10 @@
     tickFontSlider: document.getElementById('tickFontSlider'),
     tickFontNumber: document.getElementById('tickFontNumber'),
     grayscaleToggle: document.getElementById('grayscaleToggle'),
+    yAxisToggle: document.getElementById('yAxisToggle'),
+    yAxisUnitsSelect: document.getElementById('yAxisUnitsSelect'),
+    yAxisTitleRow: document.getElementById('yAxisTitleRow'),
+    yAxisTitleInput: document.getElementById('yAxisTitleInput'),
     labelsToggle: document.getElementById('labelsToggle'),
     labelAlignSelect: document.getElementById('labelAlignSelect'),
     labelFontRow: document.getElementById('labelFontRow'),
@@ -597,11 +625,38 @@
   });
 
   // ---------- offset controls ----------
+  // shared max (raw units) when "Same Y max for all" is on with a valid value, else null
+  function sharedMaxValue() {
+    if (!els.sharedMaxToggle.checked) return null;
+    var v = parseFloat(els.sharedMaxInput.value);
+    return v > 0 ? v : null;
+  }
+  // traces sit on the 0–100 normalized grid when normalizing or when using a shared max
+  function effectiveNorm() {
+    return els.normalizeToggle.checked || sharedMaxValue() !== null;
+  }
+  function traceDenom(s) {
+    var sm = sharedMaxValue();
+    return sm !== null ? sm : s.absMax;
+  }
+  function traceScale(s) {
+    return effectiveNorm() ? (100 / traceDenom(s)) : 1;
+  }
+  function niceCeil(v) {
+    if (!(v > 0)) return 1;
+    var p = Math.pow(10, Math.floor(Math.log10(v)) - 1);
+    return parseFloat((Math.ceil(v / p) * p).toPrecision(12));
+  }
+
   function resetOffsetRange() {
-    var norm = els.normalizeToggle.checked;
+    var norm = effectiveNorm();
+    lastEffNorm = norm;
+    var gapMin, gapMax;
     if (norm) {
       els.offsetSlider.min = 0; els.offsetSlider.max = 300; els.offsetSlider.step = 1;
       els.offsetSlider.value = 120; els.offsetNumber.value = 120;
+      gapMin = 0; gapMax = 300;
+      els.baseGapSlider.step = 1;
     } else {
       var globalMax = 1;
       samples.forEach(function (s) { if (s.absMax > globalMax) globalMax = s.absMax; });
@@ -609,20 +664,57 @@
       els.offsetSlider.min = 0; els.offsetSlider.max = (globalMax * 3).toFixed(4);
       els.offsetSlider.step = (globalMax / 200) || 1;
       els.offsetSlider.value = def; els.offsetNumber.value = round(def, 4);
+      gapMin = 0; gapMax = globalMax * 3;
+      els.baseGapSlider.step = (globalMax / 200) || 1;
     }
+    // keep the baseline-gap slider's range sensible for the data scale, without
+    // wiping out a gap value the user already dialed in
+    els.baseGapSlider.min = gapMin; els.baseGapSlider.max = gapMax.toFixed(4);
+    var bg = parseFloat(els.baseGapNumber.value);
+    if (!(bg === bg)) bg = 0;
+    bg = Math.max(gapMin, Math.min(gapMax, bg));
+    els.baseGapSlider.value = bg; els.baseGapNumber.value = round(bg, 4);
   }
   function round(v, digits) {
     var p = Math.pow(10, digits);
     return Math.round(v * p) / p;
   }
   els.normalizeToggle.addEventListener('change', function () { resetOffsetRange(); render(); });
+
+  function syncSharedMaxUi() {
+    var on = els.sharedMaxToggle.checked;
+    els.sharedMaxInput.style.display = on ? '' : 'none';
+    els.normalizeToggle.disabled = on;   // shared max overrides per-trace normalization
+  }
+  // reset the offset slider only when the stacking units actually change (raw <-> 0–100 grid)
+  var lastEffNorm = true;
+  function onSharedMaxChange() {
+    syncSharedMaxUi();
+    var now = effectiveNorm();
+    if (now !== lastEffNorm) resetOffsetRange();
+    render();
+  }
+  els.sharedMaxToggle.addEventListener('change', function () {
+    if (els.sharedMaxToggle.checked && !(parseFloat(els.sharedMaxInput.value) > 0)) {
+      var visMax = 0;
+      samples.forEach(function (s) { if (s.visible && s.absMax > visMax) visMax = s.absMax; });
+      els.sharedMaxInput.value = niceCeil(visMax);
+    }
+    onSharedMaxChange();
+  });
+  els.sharedMaxInput.addEventListener('input', onSharedMaxChange);
   els.offsetSlider.addEventListener('input', function () { els.offsetNumber.value = round(parseFloat(els.offsetSlider.value), 4); render(); });
   els.offsetNumber.addEventListener('input', function () {
     var v = parseFloat(els.offsetNumber.value);
     if (v === v) { els.offsetSlider.value = v; render(); }
   });
+  els.baseGapSlider.addEventListener('input', function () { els.baseGapNumber.value = round(parseFloat(els.baseGapSlider.value), 4); render(); });
+  els.baseGapNumber.addEventListener('input', function () {
+    var v = parseFloat(els.baseGapNumber.value);
+    if (v === v) { els.baseGapSlider.value = v; render(); }
+  });
   els.autoOffsetBtn.addEventListener('click', function () {
-    var norm = els.normalizeToggle.checked;
+    var norm = effectiveNorm();
     if (norm) {
       els.offsetSlider.value = 120; els.offsetNumber.value = 120;
     } else {
@@ -700,6 +792,16 @@
       render();
     }
   });
+
+  // ---------- per-trace y axes ----------
+  function syncYAxisRows() {
+    var show = els.yAxisToggle.checked;
+    els.yAxisUnitsSelect.style.display = show ? '' : 'none';
+    els.yAxisTitleRow.style.display = show ? 'flex' : 'none';
+  }
+  els.yAxisToggle.addEventListener('change', function () { syncYAxisRows(); render(); });
+  els.yAxisUnitsSelect.addEventListener('change', render);
+  els.yAxisTitleInput.addEventListener('input', render);
 
   // ---------- trace labels ----------
   els.labelsToggle.addEventListener('change', function () {
@@ -832,19 +934,19 @@
     var axisTitleFontSize = 11 * ((parseFloat(els.axisTitleFontSlider.value) || 100) / 100);
     var padBottom = Math.max(34, tickFontSize + axisTitleFontSize + 18);
 
-    var plotLeft = PAD.left, plotRight = W - PAD.right;
     var plotTop = PAD.top, plotBottom = H - padBottom;
-    var plotW = plotRight - plotLeft, plotH = plotBottom - plotTop;
+    var plotH = plotBottom - plotTop;
 
     var xMin = view.xMin, xMax = view.xMax;
     if (!(xMax > xMin)) { xMax = xMin + 1; }
-    function xScale(v) { return plotLeft + (v - xMin) / (xMax - xMin) * plotW; }
 
     if (document.activeElement !== els.xMinInput) els.xMinInput.value = round(xMin, 4);
     if (document.activeElement !== els.xMaxInput) els.xMaxInput.value = round(xMax, 4);
 
-    var norm = els.normalizeToggle.checked;
+    var norm = effectiveNorm();
+    var sharedMax = sharedMaxValue();
     var offset = parseFloat(els.offsetNumber.value) || 0;
+    var baseGap = parseFloat(els.baseGapNumber.value) || 0;
 
     // find index range covering [xMin,xMax] (x assumed monotonic non-decreasing)
     var x = dataset.x, n = dataset.n;
@@ -853,19 +955,66 @@
 
     var visibleSamples = samples.filter(function (s) { return s.visible; });
     var yMax = 0;
+    var rawRanges = [];   // per visible sample: raw-unit min/max within the x window
     visibleSamples.forEach(function (s, vi) {
-      var scale = norm ? (100 / s.absMax) : 1;
-      var top = vi * offset;
+      var scale = traceScale(s);
+      var top = baseGap + vi * offset;
+      // with a shared max, keep each band's full 0..max height in view so its axis isn't clipped
+      if (sharedMax !== null && 100 + top > yMax) yMax = 100 + top;
+      var rMin = Infinity, rMax = -Infinity;
       for (var i = lo; i < hi; i++) {
         var yv = s.y[i];
         if (yv !== yv) continue;
+        if (yv < rMin) rMin = yv;
+        if (yv > rMax) rMax = yv;
         var val = yv * scale + top;
         if (val > yMax) yMax = val;
       }
+      rawRanges.push({ min: rMin, max: rMax });
     });
     if (yMax <= 0) yMax = 1;
     yMax *= 1.08;
     function yScale(v) { return plotBottom - (v / yMax) * plotH; }
+
+    var grayscale = els.grayscaleToggle.checked;
+
+    // per-trace y axes: computed before plotLeft, since label widths set the left margin
+    var showYAxis = els.yAxisToggle.checked;
+    var yAxes = [], yTitleText = '', yAxisPad = 0;
+    if (showYAxis) {
+      var pct = els.yAxisUnitsSelect.value === 'pct';
+      yTitleText = els.yAxisTitleInput.value.trim() || (pct ? 'Relative intensity (%)' : '');
+      var maxLabelW = 0;
+      visibleSamples.forEach(function (s, vi) {
+        var r = rawRanges[vi];
+        if (!(r.max >= r.min)) return; // no finite data in view
+        var scale = traceScale(s);
+        var top = baseGap + vi * offset;
+        var u = pct ? (100 / traceDenom(s)) : 1;   // raw -> displayed tick units
+        var dLo = Math.min(0, r.min) * u;
+        var dHi = (sharedMax !== null ? sharedMax : r.max) * u;
+        if (!(dHi > dLo)) dHi = dLo + 1;
+        function toPx(t) { return yScale(t / u * scale + top); }
+        var bandPx = toPx(dLo) - toPx(dHi);
+        var count = Math.max(1, Math.min(4, Math.floor(bandPx / (tickFontSize * 2.5))));
+        var tv = ticks(dLo, dHi, count);
+        var tickObjs = [];
+        tv.forEach(function (t) {
+          var py = toPx(t);
+          if (py < plotTop - 0.5 || py > plotBottom + 0.5) return;
+          var label = formatAxisValue(t, tv);
+          maxLabelW = Math.max(maxLabelW, label.length * tickFontSize * 0.62);
+          tickObjs.push({ py: py, label: label });
+        });
+        var y0 = Math.min(plotBottom, toPx(dLo)), y1 = Math.max(plotTop, toPx(dHi));
+        if (y0 > y1) yAxes.push({ s: s, y0: y0, y1: y1, ticks: tickObjs });
+      });
+      yAxisPad = maxLabelW + 10 + (yTitleText ? axisTitleFontSize + 6 : 0);
+    }
+
+    var plotLeft = PAD.left + yAxisPad, plotRight = W - PAD.right;
+    var plotW = plotRight - plotLeft;
+    function xScale(v) { return plotLeft + (v - xMin) / (xMax - xMin) * plotW; }
 
     // gridlines + x axis
     var gGrid = svgEl('g', {});
@@ -875,25 +1024,48 @@
     xt.forEach(function (t) {
       var px = xScale(t);
       gGrid.appendChild(svgEl('line', { x1: px, x2: px, y1: plotTop, y2: plotBottom, stroke: theme.gridline, 'stroke-width': 1, 'stroke-opacity': gridOpacity }));
-      var lbl = svgEl('text', { x: px, y: plotBottom + tickFontSize + 6, 'text-anchor': 'middle', fill: theme.muted, 'font-size': tickFontSize.toFixed(2) });
+      var lbl = svgEl('text', { x: px, y: plotBottom + tickFontSize + 6, 'text-anchor': 'middle', fill: grayscale ? theme.primary : theme.muted, 'font-size': tickFontSize.toFixed(2) });
       lbl.textContent = formatTick(t, xt);
       gAxis.appendChild(lbl);
     });
     gAxis.appendChild(svgEl('line', { x1: plotLeft, x2: plotRight, y1: plotBottom, y2: plotBottom, stroke: theme.baseline, 'stroke-width': 1 }));
-    var xLabelEl = svgEl('text', { x: (plotLeft + plotRight) / 2, y: H - 6, 'text-anchor': 'middle', fill: theme.secondary, 'font-size': axisTitleFontSize.toFixed(2) });
+    var xLabelEl = svgEl('text', { x: (plotLeft + plotRight) / 2, y: H - 6, 'text-anchor': 'middle', fill: grayscale ? theme.primary : theme.secondary, 'font-size': axisTitleFontSize.toFixed(2) });
     xLabelEl.textContent = dataset.xLabel;
     gAxis.appendChild(xLabelEl);
 
     svg.appendChild(gGrid);
     svg.appendChild(gAxis);
 
+    if (showYAxis) {
+      var gY = svgEl('g', {});
+      yAxes.forEach(function (a) {
+        var col = grayscale ? theme.primary : a.s.color;
+        gY.appendChild(svgEl('line', { x1: plotLeft, x2: plotLeft, y1: a.y0, y2: a.y1, stroke: col, 'stroke-width': 1 }));
+        a.ticks.forEach(function (t) {
+          gY.appendChild(svgEl('line', { x1: plotLeft - 4, x2: plotLeft, y1: t.py, y2: t.py, stroke: col, 'stroke-width': 1 }));
+          var tl = svgEl('text', { x: plotLeft - 6, y: t.py + tickFontSize * 0.35, 'text-anchor': 'end', fill: col, 'font-size': tickFontSize.toFixed(2) });
+          tl.textContent = t.label;
+          gY.appendChild(tl);
+        });
+      });
+      if (yTitleText) {
+        var ytx = PAD.left + axisTitleFontSize * 0.8, yty = (plotTop + plotBottom) / 2;
+        var yTitleEl = svgEl('text', {
+          x: ytx, y: yty, 'text-anchor': 'middle', transform: 'rotate(-90 ' + ytx.toFixed(2) + ' ' + yty.toFixed(2) + ')',
+          fill: grayscale ? theme.primary : theme.secondary, 'font-size': axisTitleFontSize.toFixed(2)
+        });
+        yTitleEl.textContent = yTitleText;
+        gY.appendChild(yTitleEl);
+      }
+      svg.appendChild(gY);
+    }
+
     // traces
     var gTraces = svgEl('g', {});
     var maxPointsPerTrace = Math.max(400, Math.floor(plotW * 3));
-    var grayscale = els.grayscaleToggle.checked;
     visibleSamples.forEach(function (s, vi) {
-      var scale = norm ? (100 / s.absMax) : 1;
-      var top = vi * offset;
+      var scale = traceScale(s);
+      var top = baseGap + vi * offset;
       var idxs = decimateIndices(lo, hi, s.y, maxPointsPerTrace);
       var d = '';
       var started = false;
@@ -924,7 +1096,7 @@
       var labelX = align === 'left' ? plotLeft + 4 : plotRight - 4;
       var labelAnchor = align === 'left' ? 'start' : 'end';
       visibleSamples.forEach(function (s, vi) {
-        var top = vi * offset;
+        var top = baseGap + vi * offset;
         var ly = yScale(top) - labelOffsetPx;
         ly = Math.max(plotTop + labelFontSize, Math.min(plotBottom - 2, ly));
         var lbl = svgEl('text', {
@@ -947,6 +1119,18 @@
     var step = allTicks.length > 1 ? Math.abs(allTicks[1] - allTicks[0]) : Math.abs(v) || 1;
     var digits = step < 1 ? Math.min(4, Math.max(0, -Math.floor(Math.log10(step)) + 1)) : (step < 10 ? 1 : 0);
     return v.toFixed(digits);
+  }
+
+  // compact y-tick labels: shared k/M/G suffix across an axis for large counts
+  function formatAxisValue(v, allTicks) {
+    if (v === 0) return '0';
+    var maxAbs = 0;
+    allTicks.forEach(function (t) { if (Math.abs(t) > maxAbs) maxAbs = Math.abs(t); });
+    var div = 1, suffix = '';
+    if (maxAbs >= 1e9) { div = 1e9; suffix = 'G'; }
+    else if (maxAbs >= 1e6) { div = 1e6; suffix = 'M'; }
+    else if (maxAbs >= 1e4) { div = 1e3; suffix = 'k'; }
+    return parseFloat((v / div).toFixed(4)).toString() + suffix;
   }
 
   function lowerBound(arr, target) {
@@ -1213,11 +1397,21 @@
     return {
       version: 1,
       normalize: els.normalizeToggle.checked,
+      sharedMax: {
+        enabled: els.sharedMaxToggle.checked,
+        value: parseFloat(els.sharedMaxInput.value) || null
+      },
       offset: parseFloat(els.offsetNumber.value) || 0,
+      baseGap: parseFloat(els.baseGapNumber.value) || 0,
       gridlineOpacity: parseFloat(els.gridlineOpacityNumber.value) || 0,
       grayscale: els.grayscaleToggle.checked,
       axisTitleFontScale: parseFloat(els.axisTitleFontNumber.value) || 100,
       tickFontScale: parseFloat(els.tickFontNumber.value) || 100,
+      yAxis: {
+        enabled: els.yAxisToggle.checked,
+        units: els.yAxisUnitsSelect.value,
+        title: els.yAxisTitleInput.value
+      },
       labels: {
         enabled: els.labelsToggle.checked,
         align: els.labelAlignSelect.value,
@@ -1236,12 +1430,25 @@
   function applySettings(s) {
     if (!s || typeof s !== 'object') return;
     if (typeof s.normalize === 'boolean') els.normalizeToggle.checked = s.normalize;
+    if (s.sharedMax) {
+      if (typeof s.sharedMax.enabled === 'boolean') els.sharedMaxToggle.checked = s.sharedMax.enabled;
+      if (typeof s.sharedMax.value === 'number') els.sharedMaxInput.value = s.sharedMax.value;
+      syncSharedMaxUi();
+      lastEffNorm = effectiveNorm();   // imported offset below is already in the right units
+    }
     if (typeof s.offset === 'number') {
       var offVal = s.offset;
       if (offVal > parseFloat(els.offsetSlider.max)) els.offsetSlider.max = (offVal * 1.2).toFixed(4);
       if (offVal < parseFloat(els.offsetSlider.min)) els.offsetSlider.min = Math.min(0, offVal);
       els.offsetSlider.value = offVal;
       els.offsetNumber.value = offVal;
+    }
+    if (typeof s.baseGap === 'number') {
+      var gapVal = s.baseGap;
+      if (gapVal > parseFloat(els.baseGapSlider.max)) els.baseGapSlider.max = (gapVal * 1.2).toFixed(4);
+      if (gapVal < parseFloat(els.baseGapSlider.min)) els.baseGapSlider.min = Math.min(0, gapVal);
+      els.baseGapSlider.value = gapVal;
+      els.baseGapNumber.value = gapVal;
     }
     if (typeof s.gridlineOpacity === 'number') {
       var g = Math.max(0, Math.min(100, s.gridlineOpacity));
@@ -1255,6 +1462,12 @@
     if (typeof s.tickFontScale === 'number') {
       var tk = Math.max(50, Math.min(250, s.tickFontScale));
       els.tickFontSlider.value = tk; els.tickFontNumber.value = tk;
+    }
+    if (s.yAxis) {
+      if (typeof s.yAxis.enabled === 'boolean') els.yAxisToggle.checked = s.yAxis.enabled;
+      if (s.yAxis.units === 'raw' || s.yAxis.units === 'pct') els.yAxisUnitsSelect.value = s.yAxis.units;
+      if (typeof s.yAxis.title === 'string') els.yAxisTitleInput.value = s.yAxis.title;
+      syncYAxisRows();
     }
     if (s.labels) {
       if (typeof s.labels.enabled === 'boolean') {
